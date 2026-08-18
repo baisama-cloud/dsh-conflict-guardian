@@ -1,4 +1,4 @@
-﻿# dsh-conflict-guardian
+# dsh-conflict-guardian
 
 在 DeepSeek Harness（DSH）**每次启动时检测插件冲突**、自动停用或恢复冲突插件，并在 Web 界面弹出冲突报告，保证 DSH 稳定运行的插件。
 
@@ -34,3 +34,28 @@ npm pack            # 生成 dsh-conflict-guardian-0.1.0.tgz
 
 `lib/client.js` 是已打包的浏览器 bundle（`window.__ModuleLoader__.load` 形态，与 `dsh-omni-bridge` 相同）；宿主 `lib/index.js` 在 `webServer` 上注册 `POST /conflict-guardian/report` 与 `/conflict-guardian/rescan` 路由供客户端调用。若作为**动态插件**运行，宿主同样提供 `harness.handle('conflict-report' / 'conflict-rescan')` 配对，并额外注册模型可调用的 `conflict_check` 工具（两种方式都已内置，逻辑共用）。
 
+## 使用
+
+1. 安装并挂载后，每次 DSH 启动时插件自动扫描加载器；
+2. 发现冲突立即自动处理（停用冲突实例 / 恢复未运行实例），并生成报告；
+3. 打开 DSH 页面时，若有冲突即弹出报告弹窗：标题、摘要、每条冲突的**位置**（插件模块 + 组合条目 + 配置文件）与**处理结果**；
+4. 也可随时点「重新检测」获取最新状态；模型可通过 `conflict_check` 工具随时检查。
+
+## 工作原理
+
+- 通过 `ctx.get('loader')` 枚举加载器树中的真实插件条目（跳过 group/include 容器），读取每个条目的模块名、配置、启用状态与 fiber 状态（pending / active / failed）；
+- **R1 重复挂载**：按「模块名 + 配置签名（JSON）」分组，同组多于一份即真重复 → `entry._dispose()` 停用后加载实例（运行时停用，不写配置）；
+- **R2 / R3 失败与挂起**：failed 的 fiber 先 `await()` 取回原始错误；pending 的 fiber 列出 `fiber.inject` 中无人提供的服务名 → 停用；
+- **R4 自动恢复**：启用但无 fiber 的条目调用 `entry.refresh()` 重新启动，按恢复后 fiber 是否 active 判定成功与否；
+- **R5 行 id 重复**：读取每个组合文件（Include 树）的原始行，统计行 id 出现次数；
+- 报告通过 webServer 路由（静态安装）或 `harness.handle`（动态插件）提供给客户端弹窗。
+
+## 限制
+
+- 停用/恢复不持久化：重启后按原配置加载并再次检测（符合设计）；如需**永久**禁用某个冲突插件，请在组合文件中为该行设置 `disabled: true` 或删除多余行；
+- 冲突检测基于加载器运行时状态与组合文件静态分析，不解析插件源码内的服务注册（无法预判尚未加载时的服务冲突）；
+- 模型工具 `conflict_check` 仅在动态插件运行方式下注册（静态安装不引入额外依赖）。
+
+## 许可
+
+[MIT](./LICENSE)
